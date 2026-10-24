@@ -216,15 +216,20 @@ async function viewExam(id) {
 }
 
 // ---------- 응시 ----------
+const KIND_LABEL = { full: '만점', half: '절반', wrong: '오답' };
+const kindOf = (r) => (r.units === 2 ? 'full' : r.units === 1 ? 'half' : 'wrong');
 function viewTake(id) {
   const st = LS.get('attempt:' + id);
   if (!st) { toast('진행 중인 시험이 없습니다.'); location.hash = '#/'; return; }
+  st.checks = st.checks || {};
   const qs = st.questions;
   const save = () => LS.set('attempt:' + id, st);
   const ans = (q) => st.answers[q.id] || {};
   const hasAns = (q) => { const a = ans(q); return q.type === 'mc' ? a.answer !== undefined && a.answer !== null && a.answer !== '' : !!String(a.answer || '').trim(); };
   const hasPr = (q) => !!String(ans(q).principle || '').trim();
   const answeredCount = () => qs.filter(hasAns).length;
+  const checkedList = () => Object.values(st.checks);
+  let busy = false;
 
   $app.innerHTML = `
     <div class="take">
@@ -233,9 +238,10 @@ function viewTake(id) {
         <div class="timer" id="timer">00:00</div>
         <div class="row small muted" style="margin:4px 0 8px"><span id="cnt"></span><span class="spacer"></span><span id="pcnt"></span></div>
         <div class="progress"><i id="bar"></i></div>
+        <div class="live-score" id="live"></div>
         <div id="grid"></div>
         <button class="btn primary" id="submit" style="width:100%;margin-top:16px">제출하기</button>
-        <div class="muted small" style="margin-top:8px">파란색: 정답·원리 작성 / 주황: 원리 미작성</div>
+        <div class="legend small muted"><span><i class="lg done"></i>작성</span><span><i class="lg c-full"></i>만점</span><span><i class="lg c-half"></i>절반</span><span><i class="lg c-wrong"></i>오답</span></div>
       </aside>
       <section class="card" id="qbox"></section>
     </div>`;
@@ -244,21 +250,40 @@ function viewTake(id) {
   window.onbeforeunload = (e) => { e.preventDefault(); return ''; };
 
   function paintSide() {
-    const n = answeredCount();
+    const n = answeredCount(), cl = checkedList();
     document.getElementById('cnt').textContent = `답 ${n}/${qs.length}`;
-    document.getElementById('pcnt').textContent = `원리 ${qs.filter(hasPr).length}/${qs.length}`;
+    document.getElementById('pcnt').textContent = `채점 ${cl.length}/${qs.length}`;
     document.getElementById('bar').style.width = `${(n / qs.length) * 100}%`;
+    const u = cl.reduce((s, r) => s + r.units, 0);
+    document.getElementById('live').innerHTML = cl.length
+      ? `채점한 문항 기준 <b>${Math.round((u / (cl.length * 2)) * 1000) / 10}점</b> <span class="muted">(${cl.filter((r) => r.units === 2).length}만점 · ${cl.filter((r) => r.units === 1).length}절반 · ${cl.filter((r) => r.units === 0).length}오답)</span>`
+      : '<span class="muted">문제마다 “채점하기”로 바로 확인할 수 있어요</span>';
     let html = '', sec = null;
     qs.forEach((q, i) => {
       if (q.sectionId !== sec) { if (sec) html += '</div>'; sec = q.sectionId; html += `<div class="qgrid-sec">${esc(q.sectionTitle)}</div><div class="qgrid">`; }
-      const cls = hasAns(q) ? (hasPr(q) ? 'done' : 'half') : '';
+      const c = st.checks[q.id];
+      const cls = c ? 'c-' + kindOf(c) : hasAns(q) ? (hasPr(q) ? 'done' : 'half') : '';
       html += `<button class="qn ${cls} ${i === st.cur ? 'cur' : ''}" data-i="${i}" title="${esc(q.id)}">${q.no}</button>`;
     });
     document.getElementById('grid').innerHTML = html + '</div>';
     document.querySelectorAll('.qn').forEach((b) => (b.onclick = () => go(+b.dataset.i)));
   }
+  function feedbackHtml(r) {
+    const k = kindOf(r);
+    return `<div class="fb ${k}">
+      <div class="fb-head"><span class="badge ${k}">${KIND_LABEL[k]}</span><b>${r.correct ? '정답이에요' : '틀렸어요'}</b>${r.correct && !r.principleOk ? '<span class="muted small">원리 설명이 부족해서 절반</span>' : ''}</div>
+      <div class="kv">
+        <div class="k">정답</div><div class="v ${qs[st.cur].type === 'text' ? 'mono' : ''}" style="color:var(--good);font-weight:700">${esc(r.answerDisplay)}</div>
+        <div class="k">${r.correct ? '피드백' : '틀린 이유'}</div><div class="v">${esc(r.feedback || '')}</div>
+        <div class="k">핵심 원리</div><div class="v muted">${esc(r.principle || '')}</div>
+      </div>
+    </div>`;
+  }
   function paintQ() {
-    const q = qs[st.cur], a = ans(q);
+    const q = qs[st.cur], a = ans(q), c = st.checks[q.id];
+    const lock = !!c;
+    const mineIdx = a.answer !== undefined && a.answer !== null && a.answer !== '' ? Number(a.answer) : -1;
+    const ansIdx = c && q.type === 'mc' ? NO.indexOf(String(c.answerDisplay)[0]) : -1;
     const box = document.getElementById('qbox');
     box.innerHTML = `
       <div class="qhead"><span class="qid">${q.no}. ${esc(q.id)}</span><span class="qsec">${esc(q.sectionTitle)}</span><span class="mtimer" id="mtimer"></span></div>
@@ -266,24 +291,44 @@ function viewTake(id) {
       <div class="qprompt">${esc(q.prompt)}</div>
       ${codeBlock(q.code)}
       ${q.type === 'mc'
-        ? `<div class="choices">${q.choices.map((c, i) => `<button class="choice ${Number(a.answer) === i && a.answer !== undefined && a.answer !== null ? 'on' : ''}" data-c="${i}"><span class="no">${i + 1}</span><span class="txt ${/[;=(){}\[\]]/.test(c) ? 'mono' : ''}">${esc(c)}</span></button>`).join('')}</div>`
-        : `<div style="margin-bottom:16px"><label class="lbl" for="ta">답 <span class="hint">출력 순서대로 한 줄에 하나씩 (컴파일 오류면 "컴파일 오류")</span></label><textarea class="textarea mono" id="ta" rows="4" placeholder="예)\n보통\n75">${esc(a.answer || '')}</textarea></div>`}
+        ? `<div class="choices">${q.choices.map((ch, i) => `<button class="choice ${mineIdx === i ? 'on' : ''} ${lock && i === ansIdx ? 'is-ans' : ''} ${lock && mineIdx === i && i !== ansIdx ? 'is-wrong' : ''}" data-c="${i}" ${lock ? 'disabled' : ''}><span class="no">${i + 1}</span><span class="txt ${/[;=(){}\[\]]/.test(ch) ? 'mono' : ''}">${esc(ch)}</span></button>`).join('')}</div>`
+        : `<div style="margin-bottom:16px"><label class="lbl" for="ta">답 <span class="hint">출력 순서대로 한 줄에 하나씩 (컴파일 오류면 "컴파일 오류")</span></label><textarea class="textarea mono" id="ta" rows="4" placeholder="예)\n보통\n75" ${lock ? 'readonly' : ''}>${esc(a.answer || '')}</textarea></div>`}
       <div>
         <label class="lbl" for="pr">원리 / 이유 <span class="hint">정답 + 원리가 맞으면 만점, 비워두면 정답이어도 절반</span></label>
-        <textarea class="textarea" id="pr" rows="3" placeholder="왜 이 답이 나오는지 핵심 원리를 적으세요.">${esc(a.principle || '')}</textarea>
+        <textarea class="textarea" id="pr" rows="3" placeholder="왜 이 답이 나오는지 핵심 원리를 적으세요." ${lock ? 'readonly' : ''}>${esc(a.principle || '')}</textarea>
       </div>
+      <div id="fbbox">${c ? feedbackHtml(c) : ''}</div>
       <div class="qnav">
         <button class="btn" id="prev" ${st.cur === 0 ? 'disabled' : ''}>← 이전</button>
         <span class="spacer"></span>
+        ${lock ? '' : '<button class="btn check" id="chk">채점하기</button>'}
         ${st.cur < qs.length - 1 ? '<button class="btn primary" id="next">다음 →</button>' : '<button class="btn primary" id="last">제출하기</button>'}
-      </div>`;
+      </div>
+      ${lock ? '' : '<div class="muted small" style="margin-top:8px;text-align:right">채점하면 이 문항의 답은 더 이상 바꿀 수 없어요</div>'}`;
     const set = (k, v) => { st.answers[q.id] = { ...ans(q), [k]: v }; save(); paintSide(); };
-    box.querySelectorAll('.choice').forEach((b) => (b.onclick = () => { set('answer', +b.dataset.c); box.querySelectorAll('.choice').forEach((x) => x.classList.toggle('on', x === b)); }));
-    const ta = document.getElementById('ta'); if (ta) ta.oninput = () => set('answer', ta.value);
-    const pr = document.getElementById('pr'); pr.oninput = () => set('principle', pr.value);
+    if (!lock) {
+      box.querySelectorAll('.choice').forEach((b) => (b.onclick = () => { set('answer', +b.dataset.c); box.querySelectorAll('.choice').forEach((x) => x.classList.toggle('on', x === b)); }));
+      const ta = document.getElementById('ta'); if (ta) ta.oninput = () => set('answer', ta.value);
+      document.getElementById('pr').oninput = () => set('principle', document.getElementById('pr').value);
+      document.getElementById('chk').onclick = () => doCheck(q);
+    }
     document.getElementById('prev').onclick = () => go(st.cur - 1);
     const nx = document.getElementById('next'); if (nx) nx.onclick = () => go(st.cur + 1);
     const ls = document.getElementById('last'); if (ls) ls.onclick = submit;
+  }
+  async function doCheck(q) {
+    if (busy) return;
+    if (!hasAns(q)) return toast('답을 먼저 입력하세요.');
+    if (!hasPr(q) && !confirm('원리를 비워두면 정답이어도 절반만 받아요. 그대로 채점할까요?')) return;
+    busy = true;
+    const btn = document.getElementById('chk'); btn.disabled = true; btn.innerHTML = '<span class="mini-spin"></span> 채점 중…';
+    try {
+      const a = ans(q);
+      const r = await api('check', { attemptId: id, qid: q.id, answer: a.answer, principle: a.principle || '' });
+      st.checks[q.id] = r; save();
+      if (qs[st.cur].id === q.id) paintQ();
+      paintSide();
+    } catch (err) { toast(err.message, 3500); btn.disabled = false; btn.textContent = '채점하기'; } finally { busy = false; }
   }
   function go(i) {
     if (i < 0 || i >= qs.length) return;
@@ -293,15 +338,17 @@ function viewTake(id) {
   window.onkeydown = (e) => {
     if (/TEXTAREA|INPUT/.test(document.activeElement?.tagName)) return;
     const q = qs[st.cur];
-    if (q.type === 'mc' && /^[1-4]$/.test(e.key)) document.querySelector(`.choice[data-c="${+e.key - 1}"]`)?.click();
+    if (q.type === 'mc' && /^[1-4]$/.test(e.key)) document.querySelector(`.choice[data-c="${+e.key - 1}"]:not([disabled])`)?.click();
     if (e.key === 'ArrowRight') go(st.cur + 1);
     if (e.key === 'ArrowLeft') go(st.cur - 1);
+    if (e.key === 'Enter' && !st.checks[q.id]) doCheck(q);
   };
   async function submit() {
-    const noAns = qs.filter((q) => !hasAns(q)).length, noPr = qs.filter((q) => hasAns(q) && !hasPr(q)).length;
-    const warn = [noAns ? `답을 안 쓴 문항 ${noAns}개` : '', noPr ? `원리를 안 쓴 문항 ${noPr}개` : ''].filter(Boolean).join(', ');
+    const noAns = qs.filter((q) => !hasAns(q)).length;
+    const unchecked = qs.filter((q) => hasAns(q) && !st.checks[q.id]).length;
+    const warn = [noAns ? `답을 안 쓴 문항 ${noAns}개` : '', unchecked ? `아직 채점 안 한 문항 ${unchecked}개(제출 때 한꺼번에 채점)` : ''].filter(Boolean).join(', ');
     if (!confirm(`${warn ? warn + '가 있습니다.\n' : ''}제출할까요? 제출 후에는 수정할 수 없습니다.`)) return;
-    const close = overlay('<div class="spinner"></div><b>채점 중…</b><div class="muted small">AI가 원리 설명을 확인하고 있어요 (10~40초)</div>');
+    const close = overlay(`<div class="spinner"></div><b>제출 중…</b><div class="muted small">${unchecked ? 'AI가 남은 문항의 원리를 확인하고 있어요 (10~40초)' : '점수를 계산하고 있어요'}</div>`);
     try {
       const answers = {};
       for (const q of qs) { const a = ans(q); answers[q.id] = { answer: a.answer ?? null, principle: a.principle || '' }; }

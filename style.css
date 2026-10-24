@@ -167,3 +167,27 @@ table.rank tr.me td { background: var(--accent-soft); }
   .kv { grid-template-columns: 1fr; gap: 2px; }
   .kv .k { margin-top: 6px; }
 }
+
+/* 문항별 즉시 채점 */
+.btn.check { border-color: var(--accent); color: var(--accent); }
+.btn.check:hover { background: var(--accent-soft); }
+.mini-spin { width: 14px; height: 14px; border: 2px solid var(--accent-soft); border-top-color: var(--accent); border-radius: 50%; display: inline-block; animation: spin .8s linear infinite; }
+.fb { margin-top: 16px; padding: 14px 16px; border-radius: 12px; border: 1px solid var(--border); background: var(--surface-2); border-left: 4px solid var(--border); }
+.fb.full { border-left-color: var(--good); background: color-mix(in srgb, var(--good-soft) 60%, var(--surface)); }
+.fb.half { border-left-color: var(--half); background: color-mix(in srgb, var(--half-soft) 60%, var(--surface)); }
+.fb.wrong { border-left-color: var(--bad); background: color-mix(in srgb, var(--bad-soft) 60%, var(--surface)); }
+.fb-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+.choice:disabled { cursor: default; }
+.choice.is-ans { border-color: var(--good); background: var(--good-soft); }
+.choice.is-ans .no { background: var(--good); color: #fff; }
+.choice.is-wrong { border-color: var(--bad); background: var(--bad-soft); }
+.choice.is-wrong .no { background: var(--bad); color: #fff; }
+.qn.c-full { background: var(--good-soft); color: var(--good); border-color: transparent; font-weight: 700; }
+.qn.c-half { background: var(--half-soft); color: var(--half); border-color: transparent; font-weight: 700; }
+.qn.c-wrong { background: var(--bad-soft); color: var(--bad); border-color: transparent; font-weight: 700; }
+.live-score { font-size: 13px; margin: 10px 0 2px; }
+.legend { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 10px; }
+.legend span { display: inline-flex; align-items: center; gap: 4px; }
+.lg { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+.lg.done { background: var(--accent-soft); border: 1px solid var(--accent); }
+.lg.c-full { background: var(--good); } .lg.c-half { background: var(--half); } .lg.c-wrong { background: var(--bad); }
